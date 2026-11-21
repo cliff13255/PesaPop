@@ -4,6 +4,50 @@ A Kenyan payment demo: type “send 500 to John”, review the summary, tap Conf
 M-Pesa STK Push (via PayHero) asks the payer to approve on their phone. Money only moves
 after an explicit Confirm tap, and success shows only when PayHero confirms it.
 
+## What you need to do to make it work
+
+The code is finished for the demo. What's left is accounts, keys and one PayHero check,
+which only the team can do. Work through these in order; each level builds on the last.
+
+### Level 1: run it on your laptop (no accounts needed, about 10 minutes)
+You need **Node.js 20+**, **Git** and **Docker**. Then follow Runbook steps 1–2 below, ending with
+`npm run dev`. Payments are **simulated** (no real M-Pesa, clearly labelled on every page).
+
+### Level 2: put the demo online (still simulated, about 30 minutes)
+| You need | Where to get it | Where it goes |
+|----------|-----------------|---------------|
+| A **Supabase** account and project | supabase.com → New project | Runbook step 4 (`npx supabase link`) |
+| A **Vercel** account | vercel.com, sign in with GitHub | Runbook step 6 |
+| Your **domain** (optional) | Your registrar | Vercel → Settings → Domains (step 6) |
+
+Then do Runbook **step 4** (backend to Supabase) and **step 6** (frontend to Vercel).
+
+### Level 3: turn on the AI assistant (optional, 5 minutes)
+| You need | Where to get it | Where it goes |
+|----------|-----------------|---------------|
+| An **Anthropic API key** | console.anthropic.com → API keys | Supabase secret `ANTHROPIC_API_KEY` (step 4) |
+
+Without it, a basic rule-based assistant runs and the page says so.
+
+### Level 4: real M-Pesa payments with PayHero
+| You need | Where to get it | Where it goes |
+|----------|-----------------|---------------|
+| A **PayHero** account with STK Push | payhero.co.ke | n/a |
+| PayHero **API username and password** | PayHero dashboard → API keys | Supabase secrets `PAYHERO_API_USERNAME`, `PAYHERO_API_PASSWORD` |
+| PayHero **channel id** (your STK till/paybill channel) | PayHero dashboard → payment channels | Supabase secret `PAYHERO_CHANNEL_ID` |
+| A random **callback token** | `openssl rand -hex 24` | Supabase secret `PAYHERO_CALLBACK_TOKEN` |
+
+> **Required before real money:** the PayHero code (`supabase/functions/_shared/payhero.ts`) was
+> written without access to PayHero's docs. A developer must compare its marked assumptions
+> (A1–A6) with PayHero's official API docs and fix any differences first. Then follow Runbook
+> **step 5**: test with **KES 1 to your own phone** in `sandbox` mode before considering `live`.
+
+### Before you share the link
+- Set `CORS_ORIGINS` to your domain and `.vercel.app` URL (step 4, then redeploy the function).
+- Keep `MAX_AMOUNT` low (default KES 1,000). There are no accounts, so anyone with the link can use the demo.
+- Want it private? Set `DEMO_ACCESS_CODE`, and the site will ask visitors for that passcode.
+- Never put PayHero or Anthropic keys in Vercel or the frontend. They belong only in Supabase secrets.
+
 ## Architecture
 
 ```
