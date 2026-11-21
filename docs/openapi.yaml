@@ -665,7 +665,7 @@ components:
           example: pay_4Hd9sQ1wZr6T
         status:
           type: string
-          description: Always `pending` on first confirm; a repeat confirm returns the payment's current status.
+          description: "`pending` once the provider accepts the request, or `failed` if the provider rejected it or could not be reached (never `success` here). A repeat confirm returns the payment's current status."
           allOf:
             - $ref: "#/components/schemas/PaymentStatus"
         confirmation_id:

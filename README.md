@@ -26,7 +26,7 @@ every payment before money moves. Supports M-Pesa STK Push (via PayHero) and Lip
 | `docs/openapi.yaml`    | The API contract. **Source of truth.** Change a field only after telling the whole team. |
 | `docs/BUBBLE_SETUP.md` | How the Bubble app is wired to the API                                |
 | `mock/`                | Stub server that matches the contract, for building Bubble early ([README](mock/README.md)) |
-| `api/`                 | The real backend (Phase 1 onward)                                     |
+| `api/`                 | The real backend: auth, drafts, confirm, history ([README](api/README.md)) |
 
 ## Rules
 

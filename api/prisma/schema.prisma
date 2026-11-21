@@ -1,0 +1,141 @@
+// PesaPop data model. Hosted on Supabase Postgres, accessed only by this backend.
+// DATABASE_URL = Supabase pooled connection (pgbouncer, port 6543, add ?pgbouncer=true)
+// DIRECT_URL   = Supabase direct connection (port 5432), used by migrations only
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  customer
+  merchant
+}
+
+enum PaymentMethod {
+  mpesa_stk
+  payhero
+  lipwa
+}
+
+enum PaymentStatus {
+  pending
+  success
+  failed
+}
+
+enum MessageRole {
+  user
+  assistant
+}
+
+model User {
+  id           String   @id
+  name         String
+  phone        String   @unique
+  email        String   @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+
+  conversations   Conversation[]
+  drafts          PaymentDraft[]
+  payments        Payment[]        @relation("PaymentOwner")
+  received        Payment[]        @relation("PaymentMerchant")
+  paymentRequests PaymentRequest[]
+}
+
+model Conversation {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+
+  @@index([userId])
+}
+
+model Message {
+  id             String       @id
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           MessageRole
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+/// A payment the user has reviewed but not yet confirmed. Its id IS the confirmation_id.
+/// Creating a draft never contacts a payment provider.
+model PaymentDraft {
+  id        String        @id
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  method    PaymentMethod
+  amount    Int
+  fee       Int           @default(0)
+  phone     String
+  recipient String
+  reference String?
+  expiresAt DateTime
+  createdAt DateTime      @default(now())
+
+  payment Payment?
+
+  @@index([userId])
+}
+
+model Payment {
+  id                String        @id
+  userId            String
+  user              User          @relation("PaymentOwner", fields: [userId], references: [id])
+  /// Unique: one draft can only ever produce one payment (idempotent confirm).
+  draftId           String        @unique
+  draft             PaymentDraft  @relation(fields: [draftId], references: [id])
+  merchantId        String?
+  merchant          User?         @relation("PaymentMerchant", fields: [merchantId], references: [id])
+  paymentRequestId  String?
+  paymentRequest    PaymentRequest? @relation(fields: [paymentRequestId], references: [id])
+  status            PaymentStatus @default(pending)
+  method            PaymentMethod
+  amount            Int
+  fee               Int
+  phone             String
+  recipient         String
+  reference         String?
+  provider          String
+  providerReference String?
+  mpesaReceipt      String?
+  paidAt            DateTime?
+  failureReason     String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([merchantId, createdAt])
+  @@index([providerReference])
+}
+
+model PaymentRequest {
+  id            String        @id
+  merchantId    String
+  merchant      User          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  amount        Int
+  customerPhone String
+  description   String
+  status        PaymentStatus @default(pending)
+  link          String?
+  createdAt     DateTime      @default(now())
+
+  payments Payment[]
+
+  @@index([merchantId, createdAt])
+}
