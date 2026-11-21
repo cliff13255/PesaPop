@@ -4,7 +4,7 @@ export type Kind = 'payment' | 'request';
 export type MissingField = 'amount' | 'recipient' | 'phone';
 
 export interface PublicConfig {
-  provider_mode: 'simulated' | 'sandbox' | 'live';
+  provider_mode: 'simulated' | 'live';
   assistant_mode: 'claude' | 'rules';
   max_amount: number;
   access_code_required: boolean;

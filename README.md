@@ -14,7 +14,7 @@ only moves after you tap Confirm, and the app only says "successful" when M-Pesa
 | [B. Put the backend online (Supabase)](#part-b-put-the-backend-online-supabase) | The "brain" of the app on the internet | ~20 min | Supabase |
 | [C. Put the website online (Vercel)](#part-c-put-the-website-online-vercel) | A public link, optionally your own domain | ~15 min | Vercel |
 | [D. Turn on the AI assistant](#part-d-turn-on-the-ai-assistant-optional) (optional) | Smarter chat | ~5 min | Anthropic |
-| [E. Real M-Pesa payments (PayHero)](#part-e-real-m-pesa-payments-payhero) | Real prompts on real phones | needs a developer | PayHero |
+| [E. Real M-Pesa payments (PayHero)](#part-e-real-m-pesa-payments-payhero) | Real prompts on real phones | ~20 min | PayHero |
 
 Until Part E is done, payments are **simulated**: no real M-Pesa prompt is sent, no money moves,
 and a yellow banner on every page says so. That is safe for demos.
@@ -57,7 +57,7 @@ Keep a private note (not in the code, not in chat groups) with these values as y
 | Your **API URL** | `https://abcdwxyzabcdwxyzabcd.supabase.co/functions/v1/api` | Part B, step 6 |
 | Your **website URL** | `https://pesapop-xyz.vercel.app` | Part C, step 5 |
 | Anthropic **API key** (optional) | `sk-ant-...` | Part D |
-| PayHero **API username, password, channel id** | from PayHero | Part E |
+| PayHero **Basic Authorization token** and **channel id** | from PayHero | Part E |
 
 > **Keep keys secret.** API keys and passwords go only into **Supabase secrets** (Part B). Never
 > put them in the website (Vercel), in GitHub, or in screenshots.
@@ -165,9 +165,10 @@ You can also view and edit secrets in the Supabase website under **Edge Function
 
 | Secret | What it means | Default |
 |--------|---------------|---------|
-| `PROVIDER_MODE` | `simulated` = fake payments, `sandbox` = PayHero test, `live` = real money | `simulated` |
+| `PROVIDER_MODE` | `simulated` = fake payments, `live` = real M-Pesa through PayHero (PayHero has no test mode) | `simulated` |
 | `MAX_AMOUNT` | Highest KES amount allowed per payment | `1000` |
 | `RATE_LIMIT_COUNT` / `RATE_LIMIT_WINDOW_MINUTES` | Max payments per visitor in that many minutes | `5` / `10` |
+| `RATE_LIMIT_PER_PHONE` | Max M-Pesa prompts to one phone number in that window | `3` |
 | `SHOP_NAME` | Name shown in the Merchant view | `PesaPop Demo Shop` |
 | `DEMO_ACCESS_CODE` | If set, visitors must type this passcode | empty (no passcode) |
 | `CORS_ORIGINS` | Which websites may use the backend (set in Part C) | `*` (any) |
@@ -250,34 +251,56 @@ Never put this key in Vercel or anywhere in the website.
 
 ## Part E: Real M-Pesa payments (PayHero)
 
-> ⚠️ **This part needs a developer.** The PayHero connection
-> (`supabase/functions/_shared/payhero.ts`) was written **without access to PayHero's official
-> documentation**. Before any real money, a developer must compare the six marked assumptions
-> (**A1–A6** at the top of that file) with PayHero's API docs and fix any differences.
+**You need:** a **PayHero** account with M-Pesa STK Push, and Part B done.
+The PayHero connection follows PayHero's official developer docs (Authorization, Initiate MPESA
+STK Push, and Payment Callback). What's left is your keys and one real test.
 
-**You need:**
-| What | Where to find it | Supabase secret name |
-|------|------------------|----------------------|
-| A PayHero account with M-Pesa STK Push enabled | https://payhero.co.ke | n/a |
-| API username | PayHero dashboard, in the API keys / API credentials area | `PAYHERO_API_USERNAME` |
-| API password | Same place as the username | `PAYHERO_API_PASSWORD` |
-| Channel id (your till or paybill channel) | PayHero dashboard, in the payment channels area | `PAYHERO_CHANNEL_ID` |
-| Callback address | `https://YOUR_PROJECT_REF.supabase.co/functions/v1/api/webhooks/payhero` | `PAYHERO_CALLBACK_URL` |
-| Callback token (a random secret) | Run `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"` | `PAYHERO_CALLBACK_TOKEN` |
+> ⚠️ **PayHero has no test mode.** Every payment in `live` mode is **real money**. Keep
+> `MAX_AMOUNT` small and do your first test with **KES 1 to your own phone**.
 
-If you can't find the API credentials or channel id, ask PayHero support where they are.
+**1. Get your Basic Authorization token from PayHero.**
+1. Log in to your PayHero account.
+2. Open the **API Keys** menu and click **Add new API Key**.
+3. Give it a name (e.g. `PesaPop`) and click **Create API Key**.
+4. Copy the **Basic Authorization token**. Save it in your private note.
 
-**Steps (after the developer check):**
-1. Set the secrets in **sandbox** (test) mode and redeploy:
-   ```bash
-   npx supabase secrets set PROVIDER_MODE=sandbox PAYHERO_API_USERNAME=... PAYHERO_API_PASSWORD=... PAYHERO_CHANNEL_ID=... PAYHERO_CALLBACK_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1/api/webhooks/payhero PAYHERO_CALLBACK_TOKEN=...
-   npx supabase functions deploy api --no-verify-jwt
-   ```
-2. On your website, pay **KES 1** to **your own phone**.
-3. **What you should see:** an M-Pesa prompt on your phone. Enter your PIN. Within a few seconds the app changes from **pending** to **successful** and shows the M-Pesa receipt code.
-4. Only when that works every time, consider `PROVIDER_MODE=live`, keeping `MAX_AMOUNT` low.
+**2. Get your channel id.**
+In PayHero open **Payment Channels → My Payment Channels**. Copy the number (ID) of the channel
+you want payments to go to, e.g. `133`.
 
----
+**3. Make a callback token** (a random secret, so only PayHero can report payment results):
+```bash
+node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+```
+
+**4. Add everything to Supabase and redeploy.** Replace each `...` and `YOUR_PROJECT_REF`:
+```bash
+npx supabase secrets set PROVIDER_MODE=live MAX_AMOUNT=10 PAYHERO_AUTH_TOKEN=... PAYHERO_CHANNEL_ID=... PAYHERO_CALLBACK_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1/api/webhooks/payhero PAYHERO_CALLBACK_TOKEN=...
+npx supabase functions deploy api --no-verify-jwt
+```
+| Secret | What to paste |
+|--------|---------------|
+| `PAYHERO_AUTH_TOKEN` | The Basic Authorization token from step 1 (with or without the word `Basic`) |
+| `PAYHERO_CHANNEL_ID` | The channel number from step 2 |
+| `PAYHERO_CALLBACK_URL` | Exactly `https://YOUR_PROJECT_REF.supabase.co/functions/v1/api/webhooks/payhero` |
+| `PAYHERO_CALLBACK_TOKEN` | The random value from step 3 |
+| `MAX_AMOUNT` | Keep it tiny (e.g. `10`) while testing; raise it later |
+
+**5. Test with KES 1 to your own phone.** On your website, open **Pay**, enter amount `1`, your own
+number, and any recipient name. Review, then **Confirm**.
+
+**What you should see:** within seconds an **M-Pesa prompt on your phone**. Enter your PIN. A few
+seconds later the app changes from **pending** to **Payment successful** and shows the M-Pesa
+receipt code (like `SAE3YULR0Y`). The yellow "simulated" banner is gone in live mode.
+
+If the prompt arrives and you pay, but the app stays **pending**, PayHero's result isn't reaching
+the backend. Check `PAYHERO_CALLBACK_URL` and `PAYHERO_CALLBACK_TOKEN`, and look at the function's
+logs in Supabase (**Edge Functions → api → Logs**).
+
+**Know PayHero's limits.** PayHero blocks a phone number for 24 hours after 10 failed or
+cancelled prompts in a row, and restricts your whole account after 50 failed prompts in 6 hours.
+PesaPop allows at most 3 prompts per number every 10 minutes (`RATE_LIMIT_PER_PHONE`), but don't
+spam test prompts.
 
 ## Before you share the link
 - [ ] `CORS_ORIGINS` is set to your website addresses (Part C, step 7).
@@ -303,7 +326,9 @@ If you can't find the API credentials or channel id, ask PayHero support where t
 | The page asks for a **passcode** | `DEMO_ACCESS_CODE` is set | Type it, or remove the secret and redeploy |
 | **"Demo limit reached"** | Rate limit hit (5 payments per 10 minutes) | Wait, or raise `RATE_LIMIT_COUNT` and redeploy |
 | Assistant says **"Basic mode"** | No Anthropic key | Part D (optional) |
-| Payment shows **"Payments are not configured"** | Mode is sandbox/live but PayHero secrets are missing | Finish Part E, or set `PROVIDER_MODE=simulated` |
+| Payment shows **"Payments are not configured"** | Mode is `live` but PayHero secrets are missing | Finish Part E, or set `PROVIDER_MODE=simulated` |
+| Payment fails with **"PayHero could not start the M-Pesa prompt"** | Wrong token or channel id, or PayHero rejected it | Re-copy `PAYHERO_AUTH_TOKEN` and `PAYHERO_CHANNEL_ID`, redeploy, and check **Edge Functions → api → Logs** |
+| **"Too many M-Pesa prompts to this number"** | Per-phone limit (protects your PayHero account) | Wait 10 minutes |
 
 ---
 
@@ -357,7 +382,7 @@ Keep a screen recording as a backup in case the internet or M-Pesa is down.
 | `supabase/migrations/` | Database schema |
 | `supabase/functions/api/index.ts` | Edge Function entry point (Deno) |
 | `supabase/functions/_shared/` | Backend logic (runs on Deno in Supabase and on Node locally) |
-| `supabase/functions/_shared/payhero.ts` | PayHero adapter, **assumptions A1–A6 to verify** |
+| `supabase/functions/_shared/payhero.ts` | PayHero adapter (matches PayHero's docs; see the header comment) |
 | `dev/` | Local dev server (`npm run dev:api`), runner for both (`npm run dev`), migrations (`npm run db:local`) |
 | `tests/` | Backend tests: real Postgres, every response checked against the contract |
 | `web/` | React frontend (`web/vercel.json` for Vercel) |
@@ -365,7 +390,7 @@ Keep a screen recording as a backup in case the internet or M-Pesa is down.
 ## Tests
 ```bash
 # macOS / Linux
-TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54329/pesapop_test npm test   # backend: 29 tests
+TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54329/pesapop_test npm test   # backend: 37 tests
 # Windows PowerShell
 $env:TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54329/pesapop_test"; npm test
 
@@ -376,7 +401,7 @@ The backend tests wipe the `TEST_DATABASE_URL` database. Never point it at Supab
 ## Status
 | Area | State |
 |------|-------|
-| Backend: drafts, idempotent confirm, history, merchant view, assistant, PayHero callback, abuse guards | Done, 29 tests |
+| Backend: drafts, idempotent confirm, history, merchant view, assistant, PayHero, abuse guards | Done, 37 tests |
 | Frontend: landing, customer home, pay, assistant, status, history, merchant dashboard and requests | Done, 19 tests |
 | Simulated payments | Done |
-| PayHero sandbox/live | Written, **not verified** against PayHero's docs (Part E) |
+| PayHero | Matches PayHero's docs and is tested against their documented request and callback; **needs one real KES 1 test** (Part E) |

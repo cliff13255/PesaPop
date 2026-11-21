@@ -66,7 +66,7 @@ export function fakeAssistant(script: (history: { role: string; content: string 
 }
 
 export function makeApi(opts: { env?: Record<string, string>; provider?: PaymentProvider; assistant?: AssistantModel } = {}) {
-  const config = loadConfig((k) => ({ PROVIDER_MODE: 'sandbox', PAYHERO_CALLBACK_TOKEN: 'cb-secret', ...opts.env })[k]);
+  const config = loadConfig((k) => ({ PROVIDER_MODE: 'live', PAYHERO_CALLBACK_TOKEN: 'cb-secret', ...opts.env })[k]);
   const handler = createHandler({
     sql,
     config,

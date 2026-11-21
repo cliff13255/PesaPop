@@ -56,6 +56,15 @@ export async function confirm(
     throw new ApiError(429, 'rate_limited', `Demo limit reached: ${config.rateLimitCount} payments every ${config.rateLimitWindowMinutes} minutes. Please try again later.`);
   }
 
+  // PayHero blocks a number after 10 failed prompts and restricts the account after 50 failures in 6 h,
+  // so never let a public demo hammer one phone number.
+  const toPhone = (await sql<{ count: number }[]>`
+    select count(*)::int as count from public.payments
+    where phone = ${draft.phone} and created_at > now() - make_interval(mins => ${config.rateLimitWindowMinutes})`)[0]?.count ?? 0;
+  if (toPhone >= config.rateLimitPerPhone) {
+    throw new ApiError(429, 'rate_limited', `Too many M-Pesa prompts to this number. Please wait ${config.rateLimitWindowMinutes} minutes.`);
+  }
+
   const inserted = await sql<PaymentRow[]>`
     insert into public.payments (id, draft_id, session_id, ip_hash, kind, status, amount, fee, phone, recipient, reference, provider)
     values (${newId('pay')}, ${draft.id}, ${sessionId}, ${ipHash}, ${draft.kind}, 'pending', ${draft.amount}, ${draft.fee},

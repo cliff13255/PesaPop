@@ -55,14 +55,12 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
 /** Tells the viewer exactly how real the payments are. */
 export function ModeBanner() {
   const { config } = useDemo();
-  if (!config || config.provider_mode === 'live') return null;
+  if (!config || config.provider_mode !== 'simulated') return null;
   return (
-    <div className={`mode-banner mode-${config.provider_mode}`} role="note">
+    <div className="mode-banner mode-simulated" role="note">
       <div className="container">
-        {config.provider_mode === 'simulated'
-          ? 'Demo mode: payments are simulated. No real M-Pesa prompt is sent and no money moves.'
-          : 'PayHero sandbox: test payments only.'}{' '}
-        Max KES {config.max_amount.toLocaleString('en-KE')} per payment.
+        Demo mode: payments are simulated. No real M-Pesa prompt is sent and no money moves. Max KES{' '}
+        {config.max_amount.toLocaleString('en-KE')} per payment.
       </div>
     </div>
   );

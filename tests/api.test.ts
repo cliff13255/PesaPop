@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DRAFT_MARKER, rulesModel } from '../supabase/functions/_shared/assistant.ts';
 import { simulatedProvider } from '../supabase/functions/_shared/providers.ts';
+import { createPayHeroProvider, parsePayHeroCallback } from '../supabase/functions/_shared/payhero.ts';
+import { loadConfig } from '../supabase/functions/_shared/config.ts';
 import { draftBody, expectContract, fakeAssistant, fakeProvider, makeApi, resetDb, SESSION_A, SESSION_B, sql } from './helpers.ts';
 
 beforeEach(resetDb);
@@ -13,7 +15,7 @@ describe('public routes', () => {
     expectContract('/health', 'get', h);
     const c = await api('GET', '/config', { session: null });
     expectContract('/config', 'get', c);
-    expect(c.body).toMatchObject({ provider_mode: 'sandbox', max_amount: 750, access_code_required: true });
+    expect(c.body).toMatchObject({ provider_mode: 'live', max_amount: 750, access_code_required: true });
   });
 
   it('answers CORS preflight', async () => {
@@ -324,5 +326,112 @@ describe('assistant', () => {
     expect(a3.body.payment_summary).toMatchObject({ amount: 1000, recipient: 'Mary' });
     const a4 = await api('POST', '/assistant/messages', { body: { message: 'cancel that', conversation_id: a1.body.conversation_id } });
     expect(a4.body.payment_summary).toBeNull();
+  });
+});
+
+describe('PayHero adapter (matches PayHero docs)', () => {
+  const payment = {
+    id: 'pay_test123', draft_id: 'cnf_x', session_id: SESSION_A, ip_hash: 'h', kind: 'payment' as const, status: 'pending' as const,
+    amount: 100, fee: 0, phone: '+254787677676', recipient: 'John', reference: null, provider: 'payhero',
+    provider_reference: null, mpesa_receipt: null, paid_at: null, failure_reason: null, created_at: new Date(), updated_at: new Date(),
+  };
+  const env = {
+    PROVIDER_MODE: 'live',
+    PAYHERO_AUTH_TOKEN: 'Basic dG9rZW4=',
+    PAYHERO_CHANNEL_ID: '133',
+    PAYHERO_CALLBACK_URL: 'https://ref.supabase.co/functions/v1/api/webhooks/payhero',
+    PAYHERO_CALLBACK_TOKEN: 'cb-secret',
+  };
+  function capture(status: number, body: unknown) {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    return { calls, fetchFn };
+  }
+
+  it('sends the documented STK Push request and stores the CheckoutRequestID', async () => {
+    const { calls, fetchFn } = capture(201, { success: true, status: 'QUEUED', reference: 'E8UWT7CLUW', CheckoutRequestID: 'ws_CO_15012024164321519708344109' });
+    const provider = createPayHeroProvider(loadConfig((k) => (env as Record<string, string>)[k]), fetchFn);
+    const r = await provider.initiate(payment);
+    expect(r).toEqual({ status: 'pending', providerReference: 'ws_CO_15012024164321519708344109' });
+    expect(calls[0]!.url).toBe('https://backend.payhero.co.ke/api/v2/payments');
+    expect(calls[0]!.init.method).toBe('POST');
+    expect((calls[0]!.init.headers as Record<string, string>).Authorization).toBe('Basic dG9rZW4=');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      amount: 100,
+      phone_number: '0787677676',
+      channel_id: 133,
+      provider: 'm-pesa',
+      external_reference: 'pay_test123',
+      callback_url: 'https://ref.supabase.co/functions/v1/api/webhooks/payhero?token=cb-secret',
+    });
+  });
+
+  it('accepts the auth token without the "Basic " prefix too', async () => {
+    const { calls, fetchFn } = capture(201, { success: true, CheckoutRequestID: 'ws_1' });
+    await createPayHeroProvider(loadConfig((k) => ({ ...env, PAYHERO_AUTH_TOKEN: 'dG9rZW4=' } as Record<string, string>)[k]), fetchFn).initiate(payment);
+    expect((calls[0]!.init.headers as Record<string, string>).Authorization).toBe('Basic dG9rZW4=');
+  });
+
+  it.each([
+    ['an HTTP error', 401, { message: 'Unauthorized' }],
+    ['success: false', 201, { success: false }],
+  ])('fails (never succeeds) on %s', async (_n, status, body) => {
+    const { fetchFn } = capture(status, body);
+    const r = await createPayHeroProvider(loadConfig((k) => (env as Record<string, string>)[k]), fetchFn).initiate(payment);
+    expect(r.status).toBe('failed');
+  });
+
+  it('fails clearly when not configured, without calling PayHero', async () => {
+    const { calls, fetchFn } = capture(201, {});
+    const r = await createPayHeroProvider(loadConfig((k) => ({ PROVIDER_MODE: 'live' } as Record<string, string>)[k]), fetchFn).initiate(payment);
+    expect(r).toMatchObject({ status: 'failed', failureReason: expect.stringMatching(/not configured/) });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('parses the documented callback body exactly', () => {
+    const doc = {
+      forward_url: '',
+      response: {
+        Amount: 10,
+        CheckoutRequestID: 'ws_CO_14012024103543427709099876',
+        ExternalReference: 'INV-009',
+        MerchantRequestID: '3202-70921557-1',
+        MpesaReceiptNumber: 'SAE3YULR0Y',
+        Phone: '+254709099876',
+        ResultCode: 0,
+        ResultDesc: 'The service request is processed successfully.',
+        Status: 'Success',
+      },
+      status: true,
+    };
+    expect(parsePayHeroCallback(doc)).toEqual({
+      paymentId: 'INV-009',
+      providerReference: 'ws_CO_14012024103543427709099876',
+      success: true,
+      receipt: 'SAE3YULR0Y',
+      amount: 10,
+      reason: null,
+    });
+  });
+
+  it('rejects PROVIDER_MODE=sandbox because PayHero has no sandbox', () => {
+    expect(() => loadConfig((k) => ({ PROVIDER_MODE: 'sandbox' } as Record<string, string>)[k])).toThrow(/no sandbox/);
+  });
+
+  it('limits prompts to one phone number', async () => {
+    const api = makeApi({ env: { RATE_LIMIT_PER_PHONE: '2' } });
+    for (let i = 0; i < 2; i++) {
+      const s = `sessP${i}_0123456789abcdef`;
+      const cid = (await api('POST', '/payments', { body: draftBody, session: s })).body.confirmation_id;
+      expect((await api('POST', `/payments/${cid}/confirm`, { session: s, ip: `10.1.1.${i}` })).status).toBe(200);
+    }
+    const s = 'sessP9_0123456789abcdef';
+    const cid = (await api('POST', '/payments', { body: draftBody, session: s })).body.confirmation_id;
+    const blocked = await api('POST', `/payments/${cid}/confirm`, { session: s, ip: '10.1.1.9' });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.error.message).toMatch(/this number/);
   });
 });

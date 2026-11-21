@@ -12,7 +12,7 @@ info:
       for one built-in demo shop.
     - If the server sets a demo passcode, every call except /health, /config and webhooks
       must send it in `X-Demo-Code`.
-    - Payments use M-Pesa STK Push through PayHero (`provider_mode` sandbox/live), or a clearly
+    - Payments use M-Pesa STK Push through PayHero (`provider_mode` live; PayHero has no sandbox), or a clearly
       labelled `simulated` mode that moves no money.
     - Amounts are whole KES, capped at `max_amount` from /config. Phones are E.164 (+2547... / +2541...).
     - Statuses are exactly pending, success, failed.
@@ -308,7 +308,7 @@ components:
       additionalProperties: false
       required: [provider_mode, assistant_mode, max_amount, access_code_required, shop_name]
       properties:
-        provider_mode: { type: string, enum: [simulated, sandbox, live] }
+        provider_mode: { type: string, enum: [simulated, live] }
         assistant_mode: { type: string, enum: [claude, rules] }
         max_amount: { type: integer, minimum: 1 }
         access_code_required: { type: boolean }

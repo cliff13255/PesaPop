@@ -1,14 +1,16 @@
 // Server configuration from environment variables (Supabase secrets in production).
-export type ProviderMode = 'simulated' | 'sandbox' | 'live';
+export type ProviderMode = 'simulated' | 'live';
 
 export interface Config {
-  /** simulated = no real M-Pesa (clearly labelled in the UI); sandbox/live = PayHero STK Push. */
+  /** simulated = no real M-Pesa (clearly labelled in the UI); live = real PayHero STK Push (PayHero has no sandbox). */
   providerMode: ProviderMode;
   /** Highest amount (KES) one demo payment may request. */
   maxAmount: number;
   /** At most `rateLimitCount` confirmed payments per browser or IP per `rateLimitWindowMinutes`. */
   rateLimitCount: number;
   rateLimitWindowMinutes: number;
+  /** At most this many STK pushes to one phone number per window (PayHero blocks numbers after 10 failed prompts). */
+  rateLimitPerPhone: number;
   /** Assistant messages allowed per browser per minute. */
   assistantPerMinute: number;
   /** Optional shared passcode. When set, every call except health/config/webhooks must send it. */
@@ -20,8 +22,9 @@ export interface Config {
   ipSalt: string;
   payhero: {
     baseUrl: string;
-    username: string | null;
-    password: string | null;
+    /** The "Basic Authorization token" copied from PayHero dashboard -> API Keys. */
+    authToken: string | null;
+    /** PayHero dashboard -> Payment Channels -> My Payment Channels. */
     channelId: string | null;
     /** Public URL of POST /webhooks/payhero, e.g. https://<ref>.supabase.co/functions/v1/api/webhooks/payhero */
     callbackUrl: string | null;
@@ -41,14 +44,16 @@ const str = (v: string | undefined) => (v && v.trim() ? v.trim() : null);
 
 export function loadConfig(get: (key: string) => string | undefined): Config {
   const mode = (get('PROVIDER_MODE') ?? 'simulated').trim();
-  if (mode !== 'simulated' && mode !== 'sandbox' && mode !== 'live') {
-    throw new Error('PROVIDER_MODE must be simulated, sandbox or live');
+  if (mode === 'sandbox') {
+    throw new Error('PROVIDER_MODE=sandbox is not supported: PayHero has no sandbox. Use simulated, or live with a small MAX_AMOUNT.');
   }
+  if (mode !== 'simulated' && mode !== 'live') throw new Error('PROVIDER_MODE must be simulated or live');
   return {
     providerMode: mode,
     maxAmount: int(get('MAX_AMOUNT'), 1000, 1, 250000),
     rateLimitCount: int(get('RATE_LIMIT_COUNT'), 5, 1, 1000),
     rateLimitWindowMinutes: int(get('RATE_LIMIT_WINDOW_MINUTES'), 10, 1, 1440),
+    rateLimitPerPhone: int(get('RATE_LIMIT_PER_PHONE'), 3, 1, 1000),
     assistantPerMinute: int(get('ASSISTANT_PER_MINUTE'), 10, 1, 1000),
     accessCode: str(get('DEMO_ACCESS_CODE')),
     corsOrigins: (get('CORS_ORIGINS') ?? '*').split(',').map((s) => s.trim()).filter(Boolean),
@@ -56,8 +61,8 @@ export function loadConfig(get: (key: string) => string | undefined): Config {
     ipSalt: str(get('IP_HASH_SALT')) ?? 'pesapop-demo',
     payhero: {
       baseUrl: (str(get('PAYHERO_BASE_URL')) ?? 'https://backend.payhero.co.ke').replace(/\/$/, ''),
-      username: str(get('PAYHERO_API_USERNAME')),
-      password: str(get('PAYHERO_API_PASSWORD')),
+      // Accept the token with or without the leading "Basic ".
+      authToken: str(get('PAYHERO_AUTH_TOKEN'))?.replace(/^Basic\s+/i, '') ?? null,
       channelId: str(get('PAYHERO_CHANNEL_ID')),
       callbackUrl: str(get('PAYHERO_CALLBACK_URL')),
       callbackToken: str(get('PAYHERO_CALLBACK_TOKEN')),

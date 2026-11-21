@@ -270,4 +270,3 @@ button, input { font: inherit; }
 /* How real are the payments? */
 .mode-banner { font-size: 0.85rem; padding: 8px 0; font-weight: 500; }
 .mode-simulated { background: var(--amber-bg); color: #7a2e0e; }
-.mode-sandbox { background: #e0eaff; color: #1d3a8a; }
