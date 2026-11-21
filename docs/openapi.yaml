@@ -1,445 +1,286 @@
 openapi: 3.1.0
 info:
   title: PesaPop API
-  version: 0.1.0
-  summary: Backend REST API for PesaPop, a Kenyan AI-powered payment app.
+  version: 0.2.0
+  summary: PesaPop demo API (Supabase Edge Function `api`).
   description: |
-    PesaPop's Bubble frontend talks ONLY to this API. Bubble never calls Claude,
-    PayHero or Lipwa directly.
+    The web frontend (Vercel) talks ONLY to this API. It never calls Claude or PayHero directly.
 
-    Contract rules (source of truth for the whole team):
-    - Amounts are integers in KES (no decimals, no cents). `currency` is always `KES`.
-    - Phone numbers are E.164 Kenyan mobile numbers: `+2547XXXXXXXX` or `+2541XXXXXXXX`.
-    - Payment statuses are exactly `pending`, `success`, `failed`.
-    - Timestamps are ISO 8601 strings in UTC (format them to Africa/Nairobi in the UI).
-    - Only `POST /payments/{confirmation_id}/confirm` may initiate money movement.
-      Creating a payment or talking to the assistant only creates a draft.
-    - Confirm is idempotent: confirming the same `confirmation_id` again returns the
-      same payment and never charges twice.
-    - Every error response has the shape `{ "error": { "code", "message" } }`.
-
-    Changing any field name here requires telling the whole team first.
+    MVP demo rules:
+    - No user accounts. Every browser sends a random id in `X-Demo-Session`; customers see
+      only their own payments. The Merchant view shows every payment (phone numbers masked)
+      for one built-in demo shop.
+    - If the server sets a demo passcode, every call except /health, /config and webhooks
+      must send it in `X-Demo-Code`.
+    - Payments use M-Pesa STK Push through PayHero (`provider_mode` sandbox/live), or a clearly
+      labelled `simulated` mode that moves no money.
+    - Amounts are whole KES, capped at `max_amount` from /config. Phones are E.164 (+2547... / +2541...).
+    - Statuses are exactly pending, success, failed.
+    - Only `POST /payments/{confirmation_id}/confirm` sends an STK push. It is idempotent.
+    - Errors are `{ "error": { "code", "message" } }`.
 servers:
-  - url: http://localhost:4000
-    description: Local mock server (/mock)
-  - url: http://localhost:3000
-    description: Local real backend (/api)
+  - url: http://localhost:8787/api
+    description: Local (npm run dev:api)
+  - url: https://{project_ref}.supabase.co/functions/v1/api
+    description: Supabase Edge Function
+    variables:
+      project_ref:
+        default: your-project-ref
 
 security:
-  - bearerAuth: []
-
-tags:
-  - name: Auth
-  - name: Assistant
-  - name: Payments
-  - name: PaymentRequests
-  - name: Transactions
-  - name: Merchant
-  - name: System
+  - demoSession: []
 
 paths:
   /health:
     get:
-      tags: [System]
       operationId: health
-      summary: Liveness check
       security: []
       responses:
         "200":
-          description: Service is up
+          description: Up
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Health"
+              schema: { $ref: "#/components/schemas/Health" }
 
-  /auth/register:
-    post:
-      tags: [Auth]
-      operationId: register
-      summary: Create a customer or merchant account
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RegisterRequest"
-      responses:
-        "201":
-          description: Account created; returns a session token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthResponse"
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "409":
-          description: Email or phone already registered (code `conflict`)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-
-  /auth/login:
-    post:
-      tags: [Auth]
-      operationId: login
-      summary: Log in with email and password
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LoginRequest"
-      responses:
-        "200":
-          description: Logged in
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthResponse"
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          description: Wrong email or password (code `invalid_credentials`)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-
-  /me:
+  /config:
     get:
-      tags: [Auth]
-      operationId: me
-      summary: Current user
+      operationId: getConfig
+      summary: Public demo settings the UI needs
+      security: []
       responses:
         "200":
-          description: The authenticated user
+          description: Settings
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/User"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+              schema: { $ref: "#/components/schemas/PublicConfig" }
 
   /assistant/messages:
     post:
-      tags: [Assistant]
       operationId: assistantMessage
-      summary: Send a message to the payment assistant
-      description: |
-        The assistant extracts payment intent. If fields are missing it lists them in
-        `missing_fields` and asks for them. When every field is present it creates a
-        payment draft (same as `POST /payments`) and returns `payment_summary` and
-        `confirmation_id`. The assistant NEVER confirms a payment; the user must call
-        the confirm endpoint after an explicit tap.
+      summary: Talk to the payment assistant (it can draft, never confirm)
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/AssistantMessageRequest"
+            schema: { $ref: "#/components/schemas/AssistantMessageRequest" }
       responses:
         "200":
-          description: Assistant reply
+          description: Reply
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/AssistantMessageResponse"
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "429":
-          $ref: "#/components/responses/RateLimited"
+              schema: { $ref: "#/components/schemas/AssistantMessageResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/AccessCodeRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "502":
-          description: The AI provider failed or timed out (code `assistant_unavailable`)
+          description: Assistant failed (code `assistant_unavailable`)
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+              schema: { $ref: "#/components/schemas/Error" }
 
   /payments:
     post:
-      tags: [Payments]
       operationId: createPayment
-      summary: Create a payment draft (does NOT move money)
-      description: |
-        Validates the input and stores a draft that expires after 10 minutes.
-        No payment provider is contacted. Show the returned `payment_summary` to the
-        user, then call `POST /payments/{confirmation_id}/confirm` only after they tap Confirm.
+      summary: Create a payment draft (no money moves)
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/CreatePaymentRequest"
+            schema: { $ref: "#/components/schemas/CreatePaymentRequest" }
       responses:
         "201":
-          description: Draft created
+          description: Draft
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/PaymentDraftResponse"
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+              schema: { $ref: "#/components/schemas/PaymentDraftResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/AccessCodeRequired" }
 
   /payments/{confirmation_id}/confirm:
     post:
-      tags: [Payments]
       operationId: confirmPayment
-      summary: Confirm a draft and start the payment (the ONLY money-moving call)
-      description: |
-        Only the draft's owner may confirm. Idempotent: calling it again with the same
-        `confirmation_id` returns the same payment (HTTP 200) and never charges twice.
-        The payment always starts as `pending`; poll `GET /payments/{id}` for the result.
+      summary: Confirm a draft and send the M-Pesa STK push (the ONLY money-moving call)
+      description: Only the browser that created the draft may confirm it. Idempotent.
       parameters:
-        - $ref: "#/components/parameters/ConfirmationId"
+        - name: confirmation_id
+          in: path
+          required: true
+          schema: { type: string }
       responses:
         "200":
-          description: Payment started (or already started by an earlier identical call)
+          description: Started (or already started)
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/ConfirmPaymentResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          description: |
-            No draft with this confirmation_id belongs to the caller (code `not_found`).
-            Drafts owned by other users also return 404 so ids cannot be probed.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+              schema: { $ref: "#/components/schemas/ConfirmPaymentResponse" }
+        "401": { $ref: "#/components/responses/AccessCodeRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "410":
-          description: The draft expired before it was confirmed (code `draft_expired`)
+          description: Draft expired (code `draft_expired`)
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /payments/{id}:
     get:
-      tags: [Payments]
       operationId: getPayment
-      summary: Get a payment's current status and receipt
+      summary: Current status of a payment (phone masked unless it is this browser's)
       parameters:
-        - $ref: "#/components/parameters/PaymentId"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
       responses:
         "200":
-          description: The payment
+          description: Payment
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Payment"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
+              schema: { $ref: "#/components/schemas/Payment" }
+        "401": { $ref: "#/components/responses/AccessCodeRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /transactions:
+    get:
+      operationId: listTransactions
+      summary: This browser's payments, newest first
+      parameters:
+        - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransactionList" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/AccessCodeRequired" }
 
   /payment-requests:
     post:
-      tags: [PaymentRequests]
       operationId: createPaymentRequest
-      summary: Merchant requests a payment from a customer (creates a Lipwa link)
-      description: Merchant only. Creates a request and a Lipwa payment link the customer can open.
+      summary: Merchant asks a customer to pay (creates a draft; confirm sends the STK push to the customer)
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/CreatePaymentRequestRequest"
+            schema: { $ref: "#/components/schemas/CreatePaymentRequestRequest" }
       responses:
         "201":
-          description: Payment request created
+          description: Draft
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/PaymentRequest"
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-    get:
-      tags: [PaymentRequests]
-      operationId: listPaymentRequests
-      summary: List the merchant's payment requests, newest first
-      description: Merchant only.
-      parameters:
-        - $ref: "#/components/parameters/StatusFilter"
-        - $ref: "#/components/parameters/Page"
-        - $ref: "#/components/parameters/Limit"
-      responses:
-        "200":
-          description: A page of payment requests
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PaymentRequestList"
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /transactions:
-    get:
-      tags: [Transactions]
-      operationId: listTransactions
-      summary: List the caller's payments, newest first
-      description: |
-        Customers see payments they made. Merchants see payments received through
-        their payment requests.
-      parameters:
-        - $ref: "#/components/parameters/StatusFilter"
-        - $ref: "#/components/parameters/Page"
-        - $ref: "#/components/parameters/Limit"
-      responses:
-        "200":
-          description: A page of transactions
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TransactionList"
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+              schema: { $ref: "#/components/schemas/PaymentDraftResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/AccessCodeRequired" }
 
   /merchant/summary:
     get:
-      tags: [Merchant]
       operationId: merchantSummary
-      summary: Totals and counts by status for the merchant
-      description: Merchant only.
+      summary: Totals and counts by status for the demo shop
       responses:
         "200":
           description: Summary
           content:
             application/json:
+              schema: { $ref: "#/components/schemas/MerchantSummary" }
+        "401": { $ref: "#/components/responses/AccessCodeRequired" }
+
+  /merchant/transactions:
+    get:
+      operationId: merchantTransactions
+      summary: Every demo payment, newest first, phones masked except this browser's own
+      parameters:
+        - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransactionList" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/AccessCodeRequired" }
+
+  /webhooks/payhero:
+    post:
+      operationId: payheroCallback
+      summary: PayHero STK Push result callback (server to server)
+      description: Authenticated by the secret `token` query parameter set in the callback URL. Applies once per payment.
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Received
+          content:
+            application/json:
               schema:
-                $ref: "#/components/schemas/MerchantSummary"
+                type: object
+                required: [received]
+                properties:
+                  received: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/ValidationError" }
         "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
+          description: Bad token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: "Send `Authorization: Bearer <token>` using the token from register or login."
+    demoSession:
+      type: apiKey
+      in: header
+      name: X-Demo-Session
+      description: Random id (16-64 chars of A-Z a-z 0-9 _ -) generated once per browser.
 
   parameters:
-    ConfirmationId:
-      name: confirmation_id
-      in: path
-      required: true
-      schema:
-        type: string
-        minLength: 1
-      example: cnf_8Kq2xV7pLm3N
-    PaymentId:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        minLength: 1
-      example: pay_4Hd9sQ1wZr6T
-    StatusFilter:
+    Status:
       name: status
       in: query
-      required: false
-      description: Filter by status. Omit for all.
-      schema:
-        $ref: "#/components/schemas/PaymentStatus"
+      schema: { $ref: "#/components/schemas/PaymentStatus" }
     Page:
       name: page
       in: query
-      required: false
-      description: 1-based page number.
-      schema:
-        type: integer
-        minimum: 1
-        default: 1
+      schema: { type: integer, minimum: 1, default: 1 }
     Limit:
       name: limit
       in: query
-      required: false
-      description: Items per page.
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 100
-        default: 20
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
 
   responses:
     ValidationError:
-      description: The request body or parameters are invalid (code `validation_error`)
+      description: Invalid input (code `validation_error`)
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          example:
-            error:
-              code: validation_error
-              message: "phone must be an E.164 Kenyan mobile number, e.g. +254712345678"
-    Unauthorized:
-      description: Missing, invalid or expired token (code `unauthorized`)
+          schema: { $ref: "#/components/schemas/Error" }
+    AccessCodeRequired:
+      description: Demo passcode missing or wrong (code `access_code_required`)
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          example:
-            error:
-              code: unauthorized
-              message: Please log in again.
-    Forbidden:
-      description: Authenticated but not allowed, e.g. wrong role (code `forbidden`)
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          example:
-            error:
-              code: forbidden
-              message: This action is only available to merchants.
+          schema: { $ref: "#/components/schemas/Error" }
     NotFound:
-      description: Resource not found or not owned by the caller (code `not_found`)
+      description: Not found (code `not_found`)
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          example:
-            error:
-              code: not_found
-              message: Payment not found.
+          schema: { $ref: "#/components/schemas/Error" }
     RateLimited:
-      description: Too many requests (code `rate_limited`)
+      description: Demo limit reached (code `rate_limited`)
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          example:
-            error:
-              code: rate_limited
-              message: Too many requests. Try again in a minute.
+          schema: { $ref: "#/components/schemas/Error" }
 
   schemas:
     Error:
@@ -452,346 +293,154 @@ components:
           additionalProperties: false
           required: [code, message]
           properties:
-            code:
-              type: string
-              description: |
-                Machine-readable code. Known values: validation_error, unauthorized,
-                forbidden, not_found, conflict, invalid_credentials, draft_expired,
-                rate_limited, assistant_unavailable, provider_error, internal_error.
-              example: validation_error
-            message:
-              type: string
-              description: Human-readable message safe to show to the user.
-              example: amount must be a whole number of KES
+            code: { type: string }
+            message: { type: string }
 
     Health:
       type: object
       additionalProperties: false
       required: [status]
       properties:
-        status:
-          type: string
-          const: ok
+        status: { type: string, const: ok }
 
-    Role:
-      type: string
-      enum: [customer, merchant]
+    PublicConfig:
+      type: object
+      additionalProperties: false
+      required: [provider_mode, assistant_mode, max_amount, access_code_required, shop_name]
+      properties:
+        provider_mode: { type: string, enum: [simulated, sandbox, live] }
+        assistant_mode: { type: string, enum: [claude, rules] }
+        max_amount: { type: integer, minimum: 1 }
+        access_code_required: { type: boolean }
+        shop_name: { type: string }
 
     Phone:
       type: string
-      description: E.164 Kenyan mobile number.
       pattern: "^\\+254(7|1)[0-9]{8}$"
       example: "+254712345678"
-
-    AmountKES:
+    MaskedPhone:
+      type: string
+      description: E.164, or masked like +2547******78 when it belongs to another browser.
+      example: "+2547******78"
+    Amount:
       type: integer
-      description: Whole Kenyan shillings.
       minimum: 1
-      maximum: 250000
       example: 500
-
-    Currency:
-      type: string
-      const: KES
-
-    PaymentMethod:
-      type: string
-      description: |
-        `mpesa_stk` = M-Pesa STK Push, `payhero` = PayHero checkout, `lipwa` = Lipwa payment link.
-      enum: [mpesa_stk, payhero, lipwa]
-
     PaymentStatus:
       type: string
       enum: [pending, success, failed]
-
+    Kind:
+      type: string
+      enum: [payment, request]
+      description: payment = customer paid someone; request = merchant asked a customer to pay.
     Timestamp:
       type: string
       format: date-time
-      example: "2026-11-21T09:30:00.000Z"
-
-    User:
-      type: object
-      additionalProperties: false
-      required: [id, name, phone, email, role, created_at]
-      properties:
-        id:
-          type: string
-          example: usr_2Jf8kP0aXc
-        name:
-          type: string
-          example: Wanjiku Kamau
-        phone:
-          $ref: "#/components/schemas/Phone"
-        email:
-          type: string
-          format: email
-          example: wanjiku@example.co.ke
-        role:
-          $ref: "#/components/schemas/Role"
-        created_at:
-          $ref: "#/components/schemas/Timestamp"
-
-    RegisterRequest:
-      type: object
-      additionalProperties: false
-      required: [name, phone, email, password, role]
-      properties:
-        name:
-          type: string
-          minLength: 2
-          maxLength: 100
-          example: Wanjiku Kamau
-        phone:
-          $ref: "#/components/schemas/Phone"
-        email:
-          type: string
-          format: email
-          maxLength: 254
-          example: wanjiku@example.co.ke
-        password:
-          type: string
-          minLength: 8
-          maxLength: 128
-          writeOnly: true
-          example: correct-horse-42
-        role:
-          $ref: "#/components/schemas/Role"
-
-    LoginRequest:
-      type: object
-      additionalProperties: false
-      required: [email, password]
-      properties:
-        email:
-          type: string
-          format: email
-          example: wanjiku@example.co.ke
-        password:
-          type: string
-          minLength: 1
-          writeOnly: true
-          example: correct-horse-42
-
-    AuthResponse:
-      type: object
-      additionalProperties: false
-      required: [token, user]
-      properties:
-        token:
-          type: string
-          description: "JWT. Send as `Authorization: Bearer <token>`. Never display or log it."
-          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.mock.signature
-        user:
-          $ref: "#/components/schemas/User"
-
-    PaymentSummary:
-      type: object
-      description: What the user is about to approve. Show every field on the Confirmation screen.
-      additionalProperties: false
-      required: [method, amount, fee, total, currency, phone, recipient, reference, expires_at]
-      properties:
-        method:
-          $ref: "#/components/schemas/PaymentMethod"
-        amount:
-          $ref: "#/components/schemas/AmountKES"
-        fee:
-          type: integer
-          minimum: 0
-          description: Fee in whole KES charged on top of amount (0 if none).
-          example: 0
-        total:
-          type: integer
-          minimum: 1
-          description: amount + fee, in whole KES.
-          example: 500
-        currency:
-          $ref: "#/components/schemas/Currency"
-        phone:
-          $ref: "#/components/schemas/Phone"
-        recipient:
-          type: string
-          description: Who is being paid (name, business, till or paybill label).
-          example: Kenya Power
-        reference:
-          type: ["string", "null"]
-          description: Account number or note for the recipient, if any.
-          example: "ACC-104233"
-        expires_at:
-          $ref: "#/components/schemas/Timestamp"
 
     CreatePaymentRequest:
       type: object
       additionalProperties: false
-      required: [method, amount, phone, recipient]
+      required: [amount, phone, recipient]
       properties:
-        method:
-          $ref: "#/components/schemas/PaymentMethod"
-        amount:
-          $ref: "#/components/schemas/AmountKES"
+        amount: { $ref: "#/components/schemas/Amount" }
         phone:
-          description: The payer's phone (receives the M-Pesa STK prompt).
-          allOf:
-            - $ref: "#/components/schemas/Phone"
-        recipient:
-          type: string
-          minLength: 1
-          maxLength: 100
-          example: Kenya Power
-        reference:
-          type: string
-          maxLength: 64
-          description: Optional account number or note.
-          example: "ACC-104233"
+          description: Number that receives the M-Pesa prompt.
+          allOf: [{ $ref: "#/components/schemas/Phone" }]
+        recipient: { type: string, minLength: 1, maxLength: 100 }
+        reference: { type: string, minLength: 1, maxLength: 64 }
+
+    CreatePaymentRequestRequest:
+      type: object
+      additionalProperties: false
+      required: [amount, customer_phone, description]
+      properties:
+        amount: { $ref: "#/components/schemas/Amount" }
+        customer_phone: { $ref: "#/components/schemas/Phone" }
+        description: { type: string, minLength: 1, maxLength: 140 }
+
+    PaymentSummary:
+      type: object
+      additionalProperties: false
+      required: [kind, method, amount, fee, total, currency, phone, recipient, reference, expires_at]
+      properties:
+        kind: { $ref: "#/components/schemas/Kind" }
+        method: { type: string, const: mpesa_stk }
+        amount: { $ref: "#/components/schemas/Amount" }
+        fee: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 1 }
+        currency: { type: string, const: KES }
+        phone: { $ref: "#/components/schemas/Phone" }
+        recipient: { type: string }
+        reference: { type: ["string", "null"] }
+        expires_at: { $ref: "#/components/schemas/Timestamp" }
 
     PaymentDraftResponse:
       type: object
       additionalProperties: false
       required: [payment_summary, confirmation_id]
       properties:
-        payment_summary:
-          $ref: "#/components/schemas/PaymentSummary"
-        confirmation_id:
-          type: string
-          example: cnf_8Kq2xV7pLm3N
+        payment_summary: { $ref: "#/components/schemas/PaymentSummary" }
+        confirmation_id: { type: string }
 
     ConfirmPaymentResponse:
       type: object
       additionalProperties: false
       required: [id, status, confirmation_id]
       properties:
-        id:
-          type: string
-          description: Payment id. Poll `GET /payments/{id}`.
-          example: pay_4Hd9sQ1wZr6T
+        id: { type: string }
         status:
-          type: string
-          description: "`pending` once the provider accepts the request, or `failed` if the provider rejected it or could not be reached (never `success` here). A repeat confirm returns the payment's current status."
-          allOf:
-            - $ref: "#/components/schemas/PaymentStatus"
-        confirmation_id:
-          type: string
-          example: cnf_8Kq2xV7pLm3N
-
-    Receipt:
-      type: object
-      additionalProperties: false
-      required: [provider, provider_reference, mpesa_receipt, paid_at]
-      properties:
-        provider:
-          type: string
-          enum: [mpesa, payhero, lipwa]
-        provider_reference:
-          type: ["string", "null"]
-          description: The provider's transaction / checkout id.
-          example: ws_CO_21112026093012345678
-        mpesa_receipt:
-          type: ["string", "null"]
-          description: M-Pesa confirmation code, when available.
-          example: SKL4H7QW2P
-        paid_at:
-          type: ["string", "null"]
-          format: date-time
+          description: pending once the prompt is sent, failed if it could not be sent. Never success here on first confirm.
+          allOf: [{ $ref: "#/components/schemas/PaymentStatus" }]
+        confirmation_id: { type: string }
 
     Payment:
       type: object
       additionalProperties: false
-      required:
-        - id
-        - status
-        - method
-        - amount
-        - fee
-        - total
-        - currency
-        - phone
-        - recipient
-        - reference
-        - receipt
-        - failure_reason
-        - created_at
-        - updated_at
+      required: [id, kind, status, method, provider, amount, fee, total, currency, phone, recipient, reference, mpesa_receipt, paid_at, failure_reason, created_at, updated_at]
       properties:
-        id:
-          type: string
-          example: pay_4Hd9sQ1wZr6T
-        status:
-          $ref: "#/components/schemas/PaymentStatus"
-        method:
-          $ref: "#/components/schemas/PaymentMethod"
-        amount:
-          $ref: "#/components/schemas/AmountKES"
-        fee:
-          type: integer
-          minimum: 0
-        total:
-          type: integer
-          minimum: 1
-        currency:
-          $ref: "#/components/schemas/Currency"
-        phone:
-          $ref: "#/components/schemas/Phone"
-        recipient:
-          type: string
-        reference:
-          type: ["string", "null"]
-        receipt:
-          description: Present once the provider has reported success; null otherwise.
-          oneOf:
-            - $ref: "#/components/schemas/Receipt"
-            - type: "null"
-        failure_reason:
-          type: ["string", "null"]
-          description: Human-readable reason when status is failed.
-          example: The customer cancelled the M-Pesa prompt.
-        created_at:
-          $ref: "#/components/schemas/Timestamp"
-        updated_at:
-          $ref: "#/components/schemas/Timestamp"
+        id: { type: string }
+        kind: { $ref: "#/components/schemas/Kind" }
+        status: { $ref: "#/components/schemas/PaymentStatus" }
+        method: { type: string, const: mpesa_stk }
+        provider: { type: string, enum: [payhero, simulated] }
+        amount: { $ref: "#/components/schemas/Amount" }
+        fee: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 1 }
+        currency: { type: string, const: KES }
+        phone: { $ref: "#/components/schemas/MaskedPhone" }
+        recipient: { type: string }
+        reference: { type: ["string", "null"] }
+        mpesa_receipt: { type: ["string", "null"], description: "Set only when status is success." }
+        paid_at: { type: ["string", "null"], format: date-time }
+        failure_reason: { type: ["string", "null"], description: "Set only when status is failed." }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        updated_at: { $ref: "#/components/schemas/Timestamp" }
 
     TransactionItem:
       type: object
       additionalProperties: false
-      required: [id, reference, amount, currency, method, recipient, created_at, status]
+      required: [id, kind, reference, amount, currency, method, recipient, phone, created_at, status]
       properties:
-        id:
-          type: string
-          description: Payment id (use with `GET /payments/{id}` for details).
-          example: pay_4Hd9sQ1wZr6T
-        reference:
-          type: string
-          description: Display reference. The M-Pesa receipt when available, otherwise the payment id.
-          example: SKL4H7QW2P
-        amount:
-          $ref: "#/components/schemas/AmountKES"
-        currency:
-          $ref: "#/components/schemas/Currency"
-        method:
-          $ref: "#/components/schemas/PaymentMethod"
-        recipient:
-          type: string
-          example: Kenya Power
-        created_at:
-          $ref: "#/components/schemas/Timestamp"
-        status:
-          $ref: "#/components/schemas/PaymentStatus"
+        id: { type: string }
+        kind: { $ref: "#/components/schemas/Kind" }
+        reference: { type: string, description: "M-Pesa receipt when paid, otherwise the payment id." }
+        amount: { $ref: "#/components/schemas/Amount" }
+        currency: { type: string, const: KES }
+        method: { type: string, const: mpesa_stk }
+        recipient: { type: string }
+        phone: { $ref: "#/components/schemas/MaskedPhone" }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        status: { $ref: "#/components/schemas/PaymentStatus" }
 
     Pagination:
       type: object
       additionalProperties: false
       required: [page, limit, total, total_pages]
       properties:
-        page:
-          type: integer
-          minimum: 1
-        limit:
-          type: integer
-          minimum: 1
-        total:
-          type: integer
-          minimum: 0
-        total_pages:
-          type: integer
-          minimum: 0
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1 }
+        total: { type: integer, minimum: 0 }
+        total_pages: { type: integer, minimum: 0 }
 
     TransactionList:
       type: object
@@ -800,136 +449,50 @@ components:
       properties:
         items:
           type: array
-          items:
-            $ref: "#/components/schemas/TransactionItem"
-        pagination:
-          $ref: "#/components/schemas/Pagination"
-
-    CreatePaymentRequestRequest:
-      type: object
-      additionalProperties: false
-      required: [amount, customer_phone, description]
-      properties:
-        amount:
-          $ref: "#/components/schemas/AmountKES"
-        customer_phone:
-          $ref: "#/components/schemas/Phone"
-        description:
-          type: string
-          minLength: 1
-          maxLength: 140
-          example: "Invoice #1042: 2 bags of cement"
-
-    PaymentRequest:
-      type: object
-      additionalProperties: false
-      required: [id, amount, currency, customer_phone, description, status, link, created_at]
-      properties:
-        id:
-          type: string
-          example: req_7Tn3bW5yQe
-        amount:
-          $ref: "#/components/schemas/AmountKES"
-        currency:
-          $ref: "#/components/schemas/Currency"
-        customer_phone:
-          $ref: "#/components/schemas/Phone"
-        description:
-          type: string
-        status:
-          $ref: "#/components/schemas/PaymentStatus"
-        link:
-          type: ["string", "null"]
-          format: uri
-          description: Lipwa payment link to share with the customer. Null if link creation failed.
-          example: https://lipwa.link/p/req_7Tn3bW5yQe
-        created_at:
-          $ref: "#/components/schemas/Timestamp"
-
-    PaymentRequestList:
-      type: object
-      additionalProperties: false
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/PaymentRequest"
-        pagination:
-          $ref: "#/components/schemas/Pagination"
+          items: { $ref: "#/components/schemas/TransactionItem" }
+        pagination: { $ref: "#/components/schemas/Pagination" }
 
     StatusBucket:
       type: object
       additionalProperties: false
       required: [count, total]
       properties:
-        count:
-          type: integer
-          minimum: 0
-        total:
-          type: integer
-          minimum: 0
-          description: Sum of amounts in whole KES.
+        count: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 0 }
 
     MerchantSummary:
       type: object
       additionalProperties: false
-      required: [currency, total_received, success, pending, failed]
+      required: [shop_name, currency, total_received, success, pending, failed]
       properties:
-        currency:
-          $ref: "#/components/schemas/Currency"
-        total_received:
-          type: integer
-          minimum: 0
-          description: Same as success.total, in whole KES.
-        success:
-          $ref: "#/components/schemas/StatusBucket"
-        pending:
-          $ref: "#/components/schemas/StatusBucket"
-        failed:
-          $ref: "#/components/schemas/StatusBucket"
-
-    MissingField:
-      type: string
-      enum: [method, amount, recipient, phone, reference]
+        shop_name: { type: string }
+        currency: { type: string, const: KES }
+        total_received: { type: integer, minimum: 0 }
+        success: { $ref: "#/components/schemas/StatusBucket" }
+        pending: { $ref: "#/components/schemas/StatusBucket" }
+        failed: { $ref: "#/components/schemas/StatusBucket" }
 
     AssistantMessageRequest:
       type: object
       additionalProperties: false
       required: [message]
       properties:
-        message:
-          type: string
-          minLength: 1
-          maxLength: 2000
-          example: Send 500 to John
-        conversation_id:
-          type: string
-          description: Omit to start a new conversation; send the returned id to continue it.
-          example: cnv_5Rw1mK8dHs
+        message: { type: string, minLength: 1, maxLength: 2000 }
+        conversation_id: { type: string }
 
     AssistantMessageResponse:
       type: object
       additionalProperties: false
-      required: [conversation_id, reply, missing_fields, payment_summary, confirmation_id]
+      required: [conversation_id, reply, missing_fields, payment_summary, confirmation_id, assistant_mode]
       properties:
-        conversation_id:
-          type: string
-          example: cnv_5Rw1mK8dHs
-        reply:
-          type: string
-          example: "Sure. What is John's M-Pesa number?"
+        conversation_id: { type: string }
+        reply: { type: string }
         missing_fields:
           type: array
-          items:
-            $ref: "#/components/schemas/MissingField"
-          example: [phone]
+          items: { type: string, enum: [amount, recipient, phone] }
         payment_summary:
-          description: Present (non-null) only when a draft was created.
           oneOf:
             - $ref: "#/components/schemas/PaymentSummary"
             - type: "null"
-        confirmation_id:
-          type: ["string", "null"]
-          description: Present (non-null) only when a draft was created. Use it with the confirm endpoint after the user taps Confirm.
-          example: null
+        confirmation_id: { type: ["string", "null"] }
+        assistant_mode: { type: string, enum: [claude, rules] }

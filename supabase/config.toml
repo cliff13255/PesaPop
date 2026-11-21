@@ -1,0 +1,7 @@
+# Supabase CLI config. Deploy with: supabase functions deploy api --no-verify-jwt
+project_id = "pesapop"
+
+[functions.api]
+# The demo has no user accounts, so the function must accept requests without a Supabase JWT.
+verify_jwt = false
+import_map = "./functions/deno.json"
