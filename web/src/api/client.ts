@@ -93,7 +93,13 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
   try {
     res = await fetch(`${API_URL}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   } catch {
-    throw new ApiError(0, 'network_error', 'Cannot reach PesaPop. Check your connection and try again.');
+    throw new ApiError(
+      0,
+      'network_error',
+      import.meta.env.DEV
+        ? `Cannot reach the PesaPop API at ${API_URL}. Start it with "npm run dev" (or "npm run dev:api") in the repo root.`
+        : 'Cannot reach PesaPop. Check your connection and try again.',
+    );
   }
   const data = await res.json().catch(() => null);
   if (!res.ok) {

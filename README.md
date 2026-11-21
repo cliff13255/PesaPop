@@ -69,15 +69,16 @@ docker exec pesapop-db createdb -U postgres pesapop_test
 
 cp .env.example .env   # defaults are fine: simulated payments, no passcode
 npm run db:local       # create the tables
-npm run dev:api        # API on http://localhost:8787/api
+npm run dev            # starts BOTH the API (http://localhost:8787/api) and the web app
 ```
-In a second terminal:
-```bash
-cd web
-cp .env.example .env   # VITE_API_URL=http://localhost:8787/api
-npm run dev            # http://localhost:5173
-```
-Open http://localhost:5173 and tap **Try the demo**. Payments are simulated: they turn
+`npm run dev` is the one command to remember. If the web page says it **cannot reach the
+PesaPop API**, the API isn't running: start it with `npm run dev` (or `npm run dev:api` on its
+own) in the repo root. To run them separately: `npm run dev:api` in the repo root, and
+`npm run dev` inside `web/`.
+
+If `docker run ... postgres:17` can't download the image, any Postgres 15+ works; Supabase's
+image (`public.ecr.aws/supabase/postgres:17.6.1.147`) is the closest match to production.
+Open http://localhost:5173 (Vite picks 5174 if 5173 is busy) and tap **Try the demo**. Payments are simulated: they turn
 successful about 10 seconds after Confirm, and the number `+254700000000` always fails so
 you can show the failure screen.
 
